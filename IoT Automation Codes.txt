@@ -1,0 +1,204 @@
+/***************************************************
+  Adafruit MQTT Library ESP8266
+
+
+  Works great with Adafruit's Huzzah ESP board & Feather
+  ----> https://www.adafruit.com/product/2471
+  ----> https://www.adafruit.com/products/2821
+
+  Adafruit invests time and resources providing this open source code,
+  please support Adafruit and open-source hardware by purchasing
+  products from Adafruit!
+
+  Written by Tony DiCola for Adafruit Industries.
+  MIT license, all text above must be included in any redistribution
+
+  Code is edited by Anjan Chatterjee for a project called
+  IoT based Automation
+      
+ ****************************************************/
+ 
+#include <ESP8266WiFi.h>
+#include "Adafruit_MQTT.h"
+#include "Adafruit_MQTT_Client.h"
+
+/************************* Pin Definition *********************************/
+
+//Relays for switching appliances
+#define relay_1 D0
+#define relay_2 D1
+
+//Motor pins
+#define in_1 D2
+#define in_2 D3
+#define en_1 D4
+
+//Analog pin to read sensor value
+#define ldr A0
+
+/************************* WiFi Access Point *********************************/
+
+#define WLAN_SSID       "TrojanWorm"
+#define WLAN_PASS       "@WifiAC!"
+
+/************************* Adafruit.io Setup *********************************/
+
+#define AIO_SERVER      "io.adafruit.com"
+#define AIO_SERVERPORT  1883                   // use 8883 for SSL
+#define AIO_USERNAME    "anjanchatterjee"
+#define AIO_KEY         "7ece82f8de734aad8bb7dbc92888747c"
+
+/************ Global State (no need to change this!) ******************/
+
+// Create an ESP8266 WiFiClient class to connect to the MQTT server.
+WiFiClient client;
+// or... use WiFiFlientSecure for SSL
+//WiFiClientSecure client;
+
+// Setup the MQTT client class by passing in the WiFi client and MQTT server and login details.
+Adafruit_MQTT_Client mqtt(&client, AIO_SERVER, AIO_SERVERPORT, AIO_USERNAME, AIO_KEY);
+
+/****************************** Feeds ***************************************/
+
+// Setup a feed called 'photocell' for publishing.
+// Notice MQTT paths for AIO follow the form: <username>/feeds/<feedname>
+Adafruit_MQTT_Publish photocell = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/photocell");
+
+// Setup a feed called 'onoff' for subscribing to changes.
+Adafruit_MQTT_Subscribe onoffbutton1 = Adafruit_MQTT_Subscribe(&mqtt, AIO_USERNAME "/feeds/relay1");
+Adafruit_MQTT_Subscribe onoffbutton2 = Adafruit_MQTT_Subscribe(&mqtt, AIO_USERNAME "/feeds/relay2");
+Adafruit_MQTT_Subscribe onoffbutton3 = Adafruit_MQTT_Subscribe(&mqtt, AIO_USERNAME "/feeds/dcmotorrot1");
+Adafruit_MQTT_Subscribe onoffbutton4 = Adafruit_MQTT_Subscribe(&mqtt, AIO_USERNAME "/feeds/dcmotorrot2");
+
+/*************************** Sketch Code ************************************/
+
+// Bug workaround for Arduino 1.6.6, it seems to need a function declaration
+// for some reason (only affects ESP8266, likely an arduino-builder bug).
+void MQTT_connect();
+
+void setup() {
+  Serial.begin(115200);
+  delay(10);
+  pinMode(relay_1,OUTPUT);
+  pinMode(relay_2,OUTPUT);
+  pinMode(in_1,OUTPUT);
+  pinMode(in_2,OUTPUT);
+  pinMode(en_1,OUTPUT);
+  pinMode(ldr,INPUT);
+
+  Serial.println(F("Adafruit MQTT project"));
+
+  // Connect to WiFi access point.
+  Serial.println(); Serial.println();
+  Serial.print("Connecting to ");
+  Serial.println(WLAN_SSID);
+
+  WiFi.begin(WLAN_SSID, WLAN_PASS);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println();
+
+  Serial.println("WiFi connected");
+  Serial.println("IP address: "); Serial.println(WiFi.localIP());
+
+  // Setup MQTT subscription for onoff feed.
+  mqtt.subscribe(&onoffbutton1);
+  mqtt.subscribe(&onoffbutton2);
+  mqtt.subscribe(&onoffbutton3);
+  mqtt.subscribe(&onoffbutton4);
+}
+
+uint32_t x=0;
+
+void loop() {
+  // Ensure the connection to the MQTT server is alive (this will make the first
+  // connection and automatically reconnect when disconnected).  See the MQTT_connect
+  // function definition further below.
+  MQTT_connect();
+
+  // this is our 'wait for incoming subscription packets' busy subloop
+  // try to spend your time here
+
+  Adafruit_MQTT_Subscribe *subscription;
+  while ((subscription = mqtt.readSubscription(5000))) {
+    if (subscription == &onoffbutton1) {
+      Serial.print(F("Got Relay 1: "));
+      Serial.println((char *)onoffbutton1.lastread);
+      uint16_t state = atoi((char *)onoffbutton1.lastread);  // convert to a number
+      digitalWrite(relay_1,state);
+    }
+      if (subscription == &onoffbutton2) {
+      Serial.print(F("Got Relay 2: "));
+      Serial.println((char *)onoffbutton2.lastread);
+      uint16_t state = atoi((char *)onoffbutton2.lastread);  // convert to a number
+      digitalWrite(relay_2,state);
+    }
+      if (subscription == &onoffbutton3) {
+      Serial.print(F("Got DC Motor Rotation 1: "));
+      Serial.println((char *)onoffbutton3.lastread);
+      uint16_t state = atoi((char *)onoffbutton3.lastread);  // convert to a number
+      analogWrite(en_1, state);   //sets the motors speed
+      digitalWrite(in_1, HIGH);
+      digitalWrite(in_2, LOW);
+    }
+      if (subscription == &onoffbutton4) {
+      Serial.print(F("Got DC Motor Rotation 2: "));
+      Serial.println((char *)onoffbutton4.lastread);
+      uint16_t state = atoi((char *)onoffbutton4.lastread);  // convert to a number
+      analogWrite(en_1, state);   //sets the motors speed
+      digitalWrite(in_1, LOW);
+      digitalWrite(in_2, HIGH);
+    }
+  }
+
+//   Now we can publish stuff!
+  Serial.print(F("\nSending photocell val "));
+  Serial.print("Photocell"); 
+  Serial.println(analogRead(ldr));
+  Serial.print("...");
+  int ldr_val = analogRead(ldr);
+  if (! photocell.publish(ldr_val)) {
+    Serial.println(F("Failed"));
+  } else {
+    Serial.println(F("OK!"));
+  }
+
+  delay(1000);
+
+  // ping the server to keep the mqtt connection alive
+  // NOT required if you are publishing once every KEEPALIVE seconds
+  /*
+  if(! mqtt.ping()) {
+    mqtt.disconnect();
+  }
+  */
+}
+
+// Function to connect and reconnect as necessary to the MQTT server.
+// Should be called in the loop function and it will take care if connecting.
+void MQTT_connect() {
+  int8_t ret;
+
+  // Stop if already connected.
+  if (mqtt.connected()) {
+    return;
+  }
+
+  Serial.print("Connecting to MQTT... ");
+
+  uint8_t retries = 3;
+  while ((ret = mqtt.connect()) != 0) { // connect will return 0 for connected
+       Serial.println(mqtt.connectErrorString(ret));
+       Serial.println("Retrying MQTT connection in 5 seconds...");
+       mqtt.disconnect();
+       delay(5000);  // wait 5 seconds
+       retries--;
+       if (retries == 0) {
+         // basically die and wait for WDT to reset me
+         while (1);
+       }
+  }
+  Serial.println("MQTT Connected!");
+}
